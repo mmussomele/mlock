@@ -96,6 +96,7 @@ func (b *Buffer) Free() error {
 	if b.buf == nil {
 		return ErrAlreadyFreed
 	}
+	b.Zero()
 	if err := syscall.Munlock(b.buf); err != nil {
 		return err
 	}
@@ -104,6 +105,16 @@ func (b *Buffer) Free() error {
 	}
 	b.buf = nil
 	return nil
+}
+
+// Zero sets the data section of the buffer to all zeros.
+func (b *Buffer) Zero() {
+	b.data[0] = 0
+
+	// Based on bytes.Repeat - logn runtime for copying repeated data into a buffer.
+	for i := 1; i < len(b.data); i *= 2 {
+		copy(b.data[i:], b.data[:i])
+	}
 }
 
 // RequiredBytes returns the number of bytes needed to allocate the requested number of
