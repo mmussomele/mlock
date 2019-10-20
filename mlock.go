@@ -1,6 +1,7 @@
 package mlock
 
 import (
+	"bytes"
 	"crypto/rand"
 	"errors"
 	"io"
@@ -29,6 +30,8 @@ type Buffer struct {
 	canary     []byte
 	data       []byte
 	rearGuard  []byte
+
+	i int
 
 	strict bool // check padding as well as canary on access
 }
@@ -88,8 +91,70 @@ func Alloc(bytes int) (b *Buffer, err error) {
 	return b, nil
 }
 
-// ErrAlreadyFreed means that the buffer has already freed.
-var ErrAlreadyFreed = errors.New("buffer already free-d")
+var _ io.Writer = (*Buffer)(nil)
+
+// Write implements the io.Writer interface.
+func (b *Buffer) Write(buf []byte) (int, error) {
+	if err := b.canaryCheck(); err != nil {
+		return 0, err
+	}
+
+	n := copy(b.data[b.i:], buf)
+	b.i += n
+	if n < len(buf) {
+		return n, ErrBufferFull
+	}
+	return n, nil
+}
+
+const progressThresh = 10
+
+var _ io.ReaderFrom = (*Buffer)(nil)
+
+// ReadFrom implements the io.ReadFrom interface.
+func (b *Buffer) ReadFrom(r io.Reader) (int64, error) {
+	if err := b.canaryCheck(); err != nil {
+		return 0, err
+	}
+
+	var zeros int
+	var total int64
+	for {
+		n, err := r.Read(b.data[b.i:])
+		b.i += n
+		total += int64(n)
+
+		switch n {
+		case 0:
+			zeros++
+		default:
+			zeros = 0
+		}
+
+		switch {
+		case err == nil:
+			if zeros > progressThresh {
+				return total, io.ErrNoProgress
+			}
+			continue
+		case err == io.EOF:
+			return total, nil
+		default:
+			return total, err
+		}
+	}
+}
+
+var (
+	// ErrAlreadyFreed means that the buffer has already freed.
+	ErrAlreadyFreed = errors.New("buffer already free-d")
+
+	// ErrDataCorrupted means that the data in the buffer is corrupt.
+	ErrDataCorrupted = errors.New("buffer data corrupted")
+
+	// ErrBufferFull means that the buffer cannot hold more data.
+	ErrBufferFull = errors.New("no room left in buffer")
+)
 
 // Free releases the buffer back to the system.
 func (b *Buffer) Free() error {
@@ -107,7 +172,8 @@ func (b *Buffer) Free() error {
 	return nil
 }
 
-// Zero sets the data section of the buffer to all zeros.
+// Zero sets the data section of the buffer to all zeros, and resets the write location
+// to the start of the buffer.
 func (b *Buffer) Zero() {
 	b.data[0] = 0
 
@@ -115,6 +181,34 @@ func (b *Buffer) Zero() {
 	for i := 1; i < len(b.data); i *= 2 {
 		copy(b.data[i:], b.data[:i])
 	}
+	b.i = 0
+}
+
+// Strict sets the buffer to check the integrity of both the canary and any zero padding.
+// By default, only the canary is checked.
+func (b *Buffer) Strict() {
+	b.strict = true
+}
+
+func (b *Buffer) canaryCheck() error {
+	if b.buf == nil {
+		return ErrAlreadyFreed
+	}
+	// TODO: Could unroll, since len(canary) is always 16.
+	if !bytes.Equal(b.canary, canary[:]) {
+		return ErrDataCorrupted
+	}
+
+	if !b.strict || len(b.padding) == 0 {
+		return nil
+	}
+
+	for _, v := range b.padding {
+		if v != 0 {
+			return ErrDataCorrupted
+		}
+	}
+	return nil
 }
 
 // RequiredBytes returns the number of bytes needed to allocate the requested number of
