@@ -2,6 +2,7 @@ package mlock
 
 import (
 	"bytes"
+	"io"
 	"math/rand"
 	"syscall"
 	"testing"
@@ -173,6 +174,47 @@ func testBufferFull(t *testing.T, b *Buffer, size int) {
 
 	contents := append(append([]byte{}, text...), long...)[:size]
 	require.Equal(t, contents, b.data)
+}
+
+type stalledReader struct {
+	b    []byte
+	read bool
+}
+
+func (s *stalledReader) Read(b []byte) (int, error) {
+	if s.read {
+		return 0, nil
+	}
+	s.read = true
+	n := copy(b, s.b)
+	return n, nil
+}
+
+func TestReadFrom(t *testing.T) {
+	for _, s := range getSizes() {
+		testReadFrom(t, s)
+	}
+}
+
+func testReadFrom(t *testing.T, size int) {
+	b, err := Alloc(size)
+	require.NoError(t, err)
+
+	buf := bytes.NewReader(text)
+	n, err := b.ReadFrom(buf)
+	require.Equal(t, int64(len(text)), n)
+	require.NoError(t, err)
+	require.Equal(t, text, b.data[:b.i])
+
+	r := &stalledReader{b: text}
+	n, err = b.ReadFrom(r)
+	require.Equal(t, int64(len(text)), n)
+	require.EqualError(t, err, io.ErrNoProgress.Error())
+	double := append(append([]byte{}, text...), text...)
+	require.Equal(t, double, b.data[:b.i])
+
+	err = b.Free()
+	require.NoError(t, err)
 }
 
 func TestZero(t *testing.T) {
