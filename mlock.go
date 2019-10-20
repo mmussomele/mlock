@@ -38,6 +38,11 @@ type Buffer struct {
 
 // Alloc allocations a Buffer with the requested number of bytes. The bytes passed should
 // be the number the user requires, not the value returned by RequiredPages.
+//
+// The returned Buffer is NOT managed by the Go runtime. It is allocated outside of it,
+// and must be freed manually (by calling its Free() method) once the user has finished
+// with it. Failing to do so will leak the memory, and if the Buffer goes out of scope
+// without being freed, there is no way to release the memory until the process exits.
 func Alloc(bytes int) (b *Buffer, err error) {
 	mustFreeOnErr := func(b []byte, free func(b []byte) error) {
 		if err == nil {
