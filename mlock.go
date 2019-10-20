@@ -96,6 +96,29 @@ func Alloc(bytes int) (b *Buffer, err error) {
 	return b, nil
 }
 
+// View returns a view on the user data for the buffer. It may be written to or read
+// from, but data MUST not be copied outside the buffer - this will cause the data to
+// lose its protected state. The buffer returned by View may be passed to cryptographic
+// functions to decrypt data _into_ the buffer or encrypt data _out of_ the buffer (it is
+// fine to encrypt data into the buffer as well, but there isn't much point).
+func (b *Buffer) View() []byte {
+	return b.data[:b.i]
+}
+
+// Seek sets the current write index in the buffer. Seek panics if the index is negative.
+// It is an error to seek past the end of written data.
+func (b *Buffer) Seek(i int) error {
+	if i < 0 {
+		panic("negative index")
+	}
+
+	if i > len(b.data) {
+		return ErrSeekOutOfBounds
+	}
+	b.i = i
+	return nil
+}
+
 var _ io.Writer = (*Buffer)(nil)
 
 // Write implements the io.Writer interface.
@@ -159,6 +182,9 @@ var (
 
 	// ErrBufferFull means that the buffer cannot hold more data.
 	ErrBufferFull = errors.New("no room left in buffer")
+
+	// ErrSeekOutOfBounds means that the seek index was outside of the buffer.
+	ErrSeekOutOfBounds = errors.New("seek index out of bounds")
 )
 
 // Free releases the buffer back to the system.
