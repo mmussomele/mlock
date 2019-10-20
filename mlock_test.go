@@ -3,6 +3,7 @@ package mlock
 import (
 	"bytes"
 	"math/rand"
+	"syscall"
 	"testing"
 
 	"github.com/stretchr/testify/require"
@@ -28,10 +29,33 @@ func TestAlloc(t *testing.T) {
 	require.EqualError(t, err, ErrAlreadyFreed.Error())
 }
 
-var text = []byte("Hello, world! I am secure :)")
+const (
+	kb = 1024
+	mb = kb * kb
+)
+
+var (
+	text  = []byte("Hello, world! I am secure :)")
+	sizes = []int{
+		syscall.Getpagesize(),
+		3 * len(text), 4 * len(text),
+		100, 200, 300, 400, 500,
+		kb / 2, kb, 2 * kb, 256 * kb, 512 * kb,
+	}
+	bigSizes = []int{
+		mb, 2 * mb, 32 * mb, 64 * mb, 128 * mb,
+		117, 343, 451, 1701, 4004,
+	}
+)
 
 func TestWrite(t *testing.T) {
-	b, err := Alloc(pagesize)
+	for _, s := range getSizes() {
+		testWrite(t, s)
+	}
+}
+
+func testWrite(t *testing.T, size int) {
+	b, err := Alloc(size)
 	require.NoError(t, err)
 
 	n, err := b.Write(text)
@@ -50,7 +74,13 @@ func TestWrite(t *testing.T) {
 }
 
 func TestWriteCorruption(t *testing.T) {
-	b, err := Alloc(pagesize)
+	for _, s := range getSizes() {
+		testWriteCorruption(t, s)
+	}
+}
+
+func testWriteCorruption(t *testing.T, size int) {
+	b, err := Alloc(size)
 	require.NoError(t, err)
 
 	b.canary[5]++
@@ -83,30 +113,42 @@ func TestWriteCorruption(t *testing.T) {
 }
 
 func TestWriteFullBuffer(t *testing.T) {
-	b, err := Alloc(pagesize)
+	for _, s := range getSizes() {
+		testWriteFullBuffer(t, s)
+	}
+}
+
+func testWriteFullBuffer(t *testing.T, size int) {
+	b, err := Alloc(size)
 	require.NoError(t, err)
 
-	testBufferFull(t, b)
+	testBufferFull(t, b, size)
 
 	err = b.Free()
 	require.NoError(t, err)
 }
 
 func TestWriteFullBufferZero(t *testing.T) {
-	b, err := Alloc(pagesize)
+	for _, s := range getSizes() {
+		testWriteFullBufferZero(t, s)
+	}
+}
+
+func testWriteFullBufferZero(t *testing.T, size int) {
+	b, err := Alloc(size)
 	require.NoError(t, err)
 
-	testBufferFull(t, b)
+	testBufferFull(t, b, size)
 
 	b.Zero()
 
-	long := make([]byte, pagesize)
+	long := make([]byte, size)
 	n, err := rand.Read(long)
-	require.Equal(t, n, pagesize)
+	require.Equal(t, n, size)
 	require.NoError(t, err)
 
 	n, err = b.Write(long)
-	require.Equal(t, pagesize, n)
+	require.Equal(t, size, n)
 	require.NoError(t, err)
 	require.Equal(t, long, b.data)
 
@@ -114,37 +156,43 @@ func TestWriteFullBufferZero(t *testing.T) {
 	require.NoError(t, err)
 }
 
-func testBufferFull(t *testing.T, b *Buffer) {
+func testBufferFull(t *testing.T, b *Buffer, size int) {
 	n, err := b.Write(text)
 	require.Equal(t, len(text), n)
 	require.NoError(t, err)
 	require.Equal(t, text, b.data[:b.i])
 
-	long := make([]byte, pagesize)
+	long := make([]byte, size)
 	n, err = rand.Read(long)
-	require.Equal(t, n, pagesize)
+	require.Equal(t, n, size)
 	require.NoError(t, err)
 
 	n, err = b.Write(long)
-	require.Equal(t, pagesize-len(text), n)
+	require.Equal(t, size-len(text), n)
 	require.EqualError(t, err, ErrBufferFull.Error())
 
-	contents := append(append([]byte{}, text...), long...)[:pagesize]
+	contents := append(append([]byte{}, text...), long...)[:size]
 	require.Equal(t, contents, b.data)
 }
 
 func TestZero(t *testing.T) {
-	b, err := Alloc(pagesize)
+	for _, s := range getSizes() {
+		testZero(t, s)
+	}
+}
+
+func testZero(t *testing.T, size int) {
+	b, err := Alloc(size)
 	require.NoError(t, err)
 
 	n, err := rand.Read(b.data)
 	require.NoError(t, err)
-	require.Equal(t, n, pagesize)
+	require.Equal(t, n, size)
 
-	zeroes := bytes.Repeat([]byte{0}, pagesize)
+	zeroes := bytes.Repeat([]byte{0}, size)
 
 	ri := len(b.buf) - pagesize
-	di := ri - pagesize
+	di := ri - size
 	dataView := b.buf[di:ri]
 
 	require.NotEqual(t, zeroes, b.data)
@@ -156,4 +204,13 @@ func TestZero(t *testing.T) {
 
 	err = b.Free()
 	require.NoError(t, err)
+}
+
+func getSizes() []int {
+	s := make([]int, len(sizes))
+	copy(s, sizes)
+	if testing.Short() {
+		return s
+	}
+	return append(s, bigSizes...)
 }
