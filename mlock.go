@@ -132,11 +132,13 @@ func (b *Buffer) Realloc(size int) (r *Buffer, err error) {
 	return r, b.Free()
 }
 
-// View returns a view on the user data for the buffer. It may be written to or read
-// from, but data MUST not be copied outside the buffer - this will cause the data to
-// lose its protected state. The buffer returned by View may be passed to cryptographic
-// functions to decrypt data _into_ the buffer or encrypt data _out of_ the buffer (it is
-// fine to encrypt data into the buffer as well, but there isn't much point).
+// View returns a view on the written user data for the buffer. It may be written to or
+// read from, but data MUST not be copied outside the buffer - this will cause the data
+// to lose its protected state. The buffer returned by View may be passed to
+// cryptographic functions to decrypt data _into_ the buffer or encrypt data _out of_ the
+// buffer (it is fine to encrypt data into the buffer as well, but there isn't much
+// point). Calling cap(b.View()) will return a value that is not useful to the caller,
+// use b.Cap() instead.
 //
 // If b is corrupt or freed, a nil buffer is returned.
 func (b *Buffer) View() []byte {
@@ -145,6 +147,12 @@ func (b *Buffer) View() []byte {
 	}
 
 	return b.data[:b.i]
+}
+
+// Cap returns the capacity of the buffer. The length is accessible via the buffer
+// returned by b.View().
+func (b *Buffer) Cap() int {
+	return len(b.data)
 }
 
 // Seek sets the current write index in the buffer. Seek panics if the index is negative.
