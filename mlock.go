@@ -43,7 +43,13 @@ type Buffer struct {
 // and must be freed manually (by calling its Free() method) once the user has finished
 // with it. Failing to do so will leak the memory, and if the Buffer goes out of scope
 // without being freed, there is no way to release the memory until the process exits.
+//
+// Alloc panics if bytes is not positive.
 func Alloc(bytes int) (b *Buffer, err error) {
+	if bytes <= 0 {
+		panic("non-positive bytes requested")
+	}
+
 	needed := RequiredBytes(bytes)
 	buf, err := syscall.Mmap(-1, 0, needed, syscall.PROT_READ|syscall.PROT_WRITE, syscall.MAP_ANON|syscall.MAP_PRIVATE)
 	if err != nil {
@@ -56,6 +62,7 @@ func Alloc(bytes int) (b *Buffer, err error) {
 		if e := b.Free(); e != nil {
 			panic(e)
 		}
+		b = nil
 	}()
 
 	// starting indices of sub-buffers, reverse order
@@ -75,11 +82,11 @@ func Alloc(bytes int) (b *Buffer, err error) {
 	}
 
 	if err = syscall.Mprotect(b.frontGuard, syscall.PROT_NONE); err != nil {
-		return nil, err
+		return b, err
 	}
 
 	if err = syscall.Mprotect(b.rearGuard, syscall.PROT_NONE); err != nil {
-		return nil, err
+		return b, err
 	}
 
 	if n := copy(b.canary, canary[:]); n != CanarySize {
@@ -87,6 +94,42 @@ func Alloc(bytes int) (b *Buffer, err error) {
 	}
 
 	return b, nil
+}
+
+// Realloc allocates a buffer with the new size, copies the contents of b into it, and
+// then calls b.Free(). The new size must be able to hold the contents of b.
+//
+// Realloc panics if size is not positive.
+func (b *Buffer) Realloc(size int) (r *Buffer, err error) {
+	if size <= 0 {
+		panic("non-positive size requested")
+	}
+	if err := b.canaryCheck(); err != nil {
+		return nil, err
+	}
+
+	r, err = Alloc(size)
+	if err != nil {
+		return nil, err
+	}
+	defer func() {
+		if err == nil {
+			return
+		}
+		if e := r.Free(); e != nil {
+			panic(e)
+		}
+		r = nil
+	}()
+
+	if _, err := r.Write(b.data[:b.i]); err != nil {
+		if err == ErrBufferFull {
+			return r, ErrBufferTooSmall
+		}
+		return r, err
+	}
+
+	return r, b.Free()
 }
 
 // View returns a view on the user data for the buffer. It may be written to or read
@@ -187,6 +230,10 @@ var (
 
 	// ErrSeekOutOfBounds means that the seek index was outside of the buffer.
 	ErrSeekOutOfBounds = errors.New("seek index out of bounds")
+
+	// ErrBufferTooSmall means that the Buffer requested by a call to Realloc was too
+	// small to hold the original Buffer's data.
+	ErrBufferTooSmall = errors.New("realloc-ed buffer too small")
 )
 
 // Free releases the buffer back to the system.

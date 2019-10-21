@@ -217,6 +217,51 @@ func testReadFrom(t *testing.T, size int) {
 	require.NoError(t, err)
 }
 
+func TestRealloc(t *testing.T) {
+	for _, s := range getSizes() {
+		testRealloc(t, s)
+	}
+}
+
+func testRealloc(t *testing.T, size int) {
+	b, err := Alloc(size)
+	require.NoError(t, err)
+
+	long := make([]byte, size)
+	n, err := rand.Read(long)
+	require.Equal(t, n, size)
+	require.NoError(t, err)
+
+	n, err = b.Write(long)
+	require.Equal(t, size, n)
+	require.NoError(t, err)
+	require.Equal(t, long, b.data[:b.i])
+
+	r, err := b.Realloc(2 * size)
+	require.NoError(t, err)
+	require.Equal(t, long, r.data[:r.i])
+	_, err = b.Write([]byte("freed"))
+	require.EqualError(t, err, ErrAlreadyFreed.Error())
+
+	r2, err := r.Realloc(3 * size / 2)
+	require.NoError(t, err)
+	require.Equal(t, long, r2.data[:r2.i])
+	_, err = r.Write([]byte("freed"))
+	require.EqualError(t, err, ErrAlreadyFreed.Error())
+
+	_, err = r2.Realloc(size / 2)
+	require.EqualError(t, err, ErrBufferTooSmall.Error())
+
+	foobar := []byte("foobar")
+	n, err = r2.Write(foobar)
+	require.Equal(t, n, len(foobar))
+	require.NoError(t, err)
+	require.Equal(t, append(long, foobar...), r2.data[:r2.i])
+
+	err = r2.Free()
+	require.NoError(t, err)
+}
+
 func TestZero(t *testing.T) {
 	for _, s := range getSizes() {
 		testZero(t, s)
