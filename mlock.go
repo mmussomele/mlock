@@ -156,7 +156,7 @@ func (b *Buffer) Cap() int {
 }
 
 // Seek sets the current write index in the buffer. Seek panics if the index is negative.
-// It is an error to seek past the end of written data.
+// It is an error to seek past the capacity of the buffer.
 func (b *Buffer) Seek(i int) error {
 	if i < 0 {
 		panic("negative index")
@@ -165,7 +165,7 @@ func (b *Buffer) Seek(i int) error {
 		return err
 	}
 
-	if i > len(b.data) {
+	if i >= b.Cap() {
 		return ErrSeekOutOfBounds
 	}
 	b.i = i
