@@ -94,7 +94,13 @@ func Alloc(bytes int) (b *Buffer, err error) {
 // lose its protected state. The buffer returned by View may be passed to cryptographic
 // functions to decrypt data _into_ the buffer or encrypt data _out of_ the buffer (it is
 // fine to encrypt data into the buffer as well, but there isn't much point).
+//
+// If b is corrupt or freed, a nil buffer is returned.
 func (b *Buffer) View() []byte {
+	if err := b.canaryCheck(); err != nil {
+		return nil
+	}
+
 	return b.data[:b.i]
 }
 
@@ -103,6 +109,9 @@ func (b *Buffer) View() []byte {
 func (b *Buffer) Seek(i int) error {
 	if i < 0 {
 		panic("negative index")
+	}
+	if err := b.canaryCheck(); err != nil {
+		return err
 	}
 
 	if i > len(b.data) {
