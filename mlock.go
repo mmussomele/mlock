@@ -44,26 +44,19 @@ type Buffer struct {
 // with it. Failing to do so will leak the memory, and if the Buffer goes out of scope
 // without being freed, there is no way to release the memory until the process exits.
 func Alloc(bytes int) (b *Buffer, err error) {
-	mustFreeOnErr := func(b []byte, free func(b []byte) error) {
-		if err == nil {
-			return
-		}
-		if e := free(b); e != nil {
-			panic(e)
-		}
-	}
-
 	needed := RequiredBytes(bytes)
 	buf, err := syscall.Mmap(-1, 0, needed, syscall.PROT_READ|syscall.PROT_WRITE, syscall.MAP_ANON|syscall.MAP_PRIVATE)
 	if err != nil {
 		return nil, err
 	}
-	defer mustFreeOnErr(buf, syscall.Munmap)
-
-	if err = syscall.Mlock(buf); err != nil {
-		return nil, err
-	}
-	defer mustFreeOnErr(buf, syscall.Munlock)
+	defer func() {
+		if err == nil {
+			return
+		}
+		if e := b.Free(); e != nil {
+			panic(e)
+		}
+	}()
 
 	// starting indices of sub-buffers, reverse order
 	ri := len(buf) - pagesize
@@ -193,9 +186,6 @@ func (b *Buffer) Free() error {
 		return ErrAlreadyFreed
 	}
 	b.Zero()
-	if err := syscall.Munlock(b.buf); err != nil {
-		return err
-	}
 	if err := syscall.Munmap(b.buf); err != nil {
 		return err
 	}
